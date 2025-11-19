@@ -1,4 +1,6 @@
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import csv
 import hashlib
@@ -6,6 +8,8 @@ import time
 import re
 import sys
 import xml.etree.ElementTree as ET
+import concurrent.futures
+import random
 
 # ------------------------------------------------------------------------------
 # CONFIGURATIE
@@ -13,23 +17,15 @@ import xml.etree.ElementTree as ET
 SITEMAP_URL = "https://werkenbij.ggzingeest.nl/job-sitemap.xml"
 OUTPUT_FILE = "jobs_feed.csv"
 DEFAULT_IMAGE = "https://werkenbij.ggzingeest.nl/wp-content/themes/ggz-ingeest/assets/img/logo.svg"
+MAX_WORKERS = 5  # Aantal tegelijkertijd actieve 'scrapers' (5 is veilig en snel)
 
 # Google Ads "Jobs" Feed Specificaties
 CSV_HEADERS = [
-    "Job ID",           
-    "Location ID",      
-    "Title",            
-    "Final URL",        
-    "Image URL",        
-    "Subtitle",         
-    "Description",      
-    "Salary",           
-    "Category",         
-    "Contextual keywords", 
-    "Address"           
+    "Job ID", "Location ID", "Title", "Final URL", "Image URL", 
+    "Subtitle", "Description", "Salary", "Category", 
+    "Contextual keywords", "Address"
 ]
 
-# Woorden die we NIET aan het einde van een titel willen zien
 BAD_ENDINGS = [
     "en", "of", "tot", "bij", "voor", "de", "het", "een", "in", "met",
     "ambulant", "klinisch", "coordinerend", "verpleegkundig", "specialist",
@@ -37,7 +33,6 @@ BAD_ENDINGS = [
     "junior", "tijdelijk", "vaste", "waarnemend"
 ]
 
-# Slimme vervangingen voor titels
 TITLE_REPLACEMENTS = {
     "Verpleegkundig Specialist": "VS",
     "Verpleegkundige": "Vpl.",
@@ -54,13 +49,11 @@ TITLE_REPLACEMENTS = {
     "Kinderen": "Kind."
 }
 
-# Bekende locaties om te herkennen of een tekst een locatie is
 KNOWN_LOCATIONS = [
     "Amsterdam", "Haarlem", "Amstelveen", "Hoofddorp", "Bennebroek", 
     "Badhoevedorp", "Zuid-Kennemerland", "Amstelland"
 ]
 
-# Mapping van vage regio-namen naar harde Google Maps steden
 LOCATION_MAPPING = {
     "Regio Amsterdam-Amstelland en Zuid-Kennemerland": "Amsterdam",
     "Zuid-Kennemerland": "Haarlem",
@@ -84,21 +77,34 @@ KEYWORD_MAPPING = {
 
 BASE_KEYWORDS = [
     "Werken bij GGZ inGeest", "GGZ inGeest vacatures", "Vacatures GGZ inGeest",
-    "Werken bij GGZ", "GGZ vacatures", 
-    "Vacatures inGeest", "Werken in de GGZ"
+    "Werken bij GGZ", "GGZ vacatures", "Vacatures inGeest", "Werken in de GGZ"
 ]
+
+# ------------------------------------------------------------------------------
+# SESSION SETUP (VOOR SNELHEID & ROBUUSTHEID)
+# ------------------------------------------------------------------------------
+def create_session():
+    session = requests.Session()
+    # Retry logica: Probeer 3 keer opnieuw als de server 500/502/503/504 geeft
+    retries = Retry(total=3, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    })
+    return session
+
+# Global session object
+http = create_session()
 
 # ------------------------------------------------------------------------------
 # HULP FUNCTIES
 # ------------------------------------------------------------------------------
 
 def get_content(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-    }
     try:
-        response = requests.get(url, headers=headers, timeout=20)
+        # Timeout iets korter omdat we nu retries hebben
+        response = http.get(url, timeout=10)
         response.raise_for_status()
         return response.content
     except Exception as e:
@@ -122,7 +128,6 @@ def extract_links_from_sitemap():
     except:
         print("❌ Kon XML niet lezen.")
         return []
-
     return list(vacancy_urls)
 
 def clean_forbidden_chars(text):
@@ -192,7 +197,13 @@ def generate_keywords(title, category, location):
     cleaned_keywords = [k.replace(';', '') for k in unique_keywords if k]
     return ";".join(cleaned_keywords[:25])
 
+# ------------------------------------------------------------------------------
+# PARSE FUNCTIE (Nu Thread-Safe gemaakt)
+# ------------------------------------------------------------------------------
 def parse_job_page(url):
+    # Kleine random jitter om niet als een bot over te komen bij parallel requests
+    time.sleep(random.uniform(0.01, 0.1))
+
     if "vacatures/?view" in url or url.endswith("/vacatures/"):
         return None
 
@@ -210,33 +221,22 @@ def parse_job_page(url):
     raw_salary = ""
 
     try:
-        # HEADER SCRAPING (Smart Detection)
         main = soup.find('main')
         if main:
             article = main.find('article')
             if article:
                 section = article.find('section')
                 if section:
-                    # We zoeken de container met de metadata (uren, locatie, salaris)
                     container = section.find('div').find('div').find_all('div', recursive=False)[0]
                     if container:
                         items = container.find_all('div', recursive=False)
-                        
-                        # Loop door alle items en bepaal wat wat is op basis van inhoud
                         for item in items:
                             text = item.get_text(strip=True)
-                            
-                            # Check 1: Is dit Salaris? (Bevat euro teken)
                             if '€' in text:
                                 raw_salary = text
                                 continue
-                                
-                            # Check 2: Is dit Uren? (Bevat 'uur' of 'wk')
                             if 'uur' in text.lower() or '/wk' in text.lower():
-                                continue # Doen we niks mee voor de feed
-                                
-                            # Check 3: Is dit Locatie? (Bevat bekende plaatsnaam of 'Regio')
-                            # We checken of een van de KNOWN_LOCATIONS in de tekst voorkomt
+                                continue
                             if any(loc in text for loc in KNOWN_LOCATIONS) or "Regio" in text:
                                 raw_location = text
                                 continue
@@ -253,7 +253,6 @@ def parse_job_page(url):
     if not full_title or full_title.lower() == "vacatures":
         return None
 
-    # DATA VULLEN & MAPPING TOEPASSEN
     job["Title"] = format_google_text(full_title, 25, is_title=True)
     if len(job["Title"]) < 3:
          job["Title"] = format_google_text(full_title.split()[0], 25)
@@ -276,32 +275,21 @@ def parse_job_page(url):
     job["Category"] = found_cat
     job["Subtitle"] = format_google_text(found_cat, 25)
 
-    # LOCATIE LOGICA (Google Ads Proof)
-    final_city = "Amsterdam" # Fallback
-    
+    final_city = "Amsterdam"
     if raw_location:
-        # 1. Check of we de lange regio naam moeten mappen naar een stad
         mapped = False
         for regio, stad in LOCATION_MAPPING.items():
             if regio in raw_location:
                 final_city = stad
                 mapped = True
                 break
-        
-        # 2. Als er geen mapping is, gebruik de raw location als hij 'schoon' genoeg is
         if not mapped:
-            # Filter eventuele rare tekens eruit
             clean_raw = clean_forbidden_chars(raw_location)
-            # Als het lijkt op een stad (kort genoeg), gebruik het
             if len(clean_raw) < 20:
                 final_city = clean_raw
-            else:
-                # Te lang en geen mapping? Val terug op Amsterdam (veilig)
-                final_city = "Amsterdam"
 
     job["Location ID"] = final_city
-    job["Address"] = f"{final_city} NL"
-    
+    job["Address"] = f"{final_city}, NL"
     job["Salary"] = clean_salary(raw_salary)
 
     desc_div = soup.find('div', class_='vacancy-content') or soup.find('div', class_='content')
@@ -322,33 +310,44 @@ def parse_job_page(url):
     return job
 
 # ------------------------------------------------------------------------------
-# MAIN
+# MAIN (Parallel Uitvoering)
 # ------------------------------------------------------------------------------
 def main():
-    print("🚀 Start Scraper v10.0 (Smart Location & Salary Fix)")
+    start_time = time.time()
+    print(f"🚀 Start Scraper v12.0 (Turbo Mode - {MAX_WORKERS} threads)")
+    
     links = extract_links_from_sitemap()
     if not links: sys.exit(1)
 
-    print(f"✅ {len(links)} links gevonden. Start verwerking...")
+    print(f"✅ {len(links)} links gevonden. Start parallelle verwerking...")
     valid_jobs = []
-    
-    for i, link in enumerate(links):
-        if i >= 300: break
-        if i % 10 == 0: print(f"   Bezig met {i+1}/{len(links)}...")
+
+    # Hier gebeurt de magie: We voeren parse_job_page parallel uit
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        # We maken een map van URL -> Future object
+        future_to_url = {executor.submit(parse_job_page, url): url for url in links}
         
-        try:
-            job = parse_job_page(link)
-            if job: valid_jobs.append(job)
-            time.sleep(0.1)
-        except Exception as e:
-            print(f"   Fout bij {link}: {e}")
+        completed = 0
+        for future in concurrent.futures.as_completed(future_to_url):
+            completed += 1
+            if completed % 20 == 0:
+                print(f"   Voortgang: {completed}/{len(links)}...")
+            
+            try:
+                data = future.result()
+                if data:
+                    valid_jobs.append(data)
+            except Exception as exc:
+                print(f"   Fout in thread: {exc}")
 
     print(f"💾 Opslaan van {len(valid_jobs)} vacatures naar {OUTPUT_FILE}...")
     with open(OUTPUT_FILE, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
         writer.writeheader()
         writer.writerows(valid_jobs)
-    print("🎉 Klaar!")
+    
+    duration = time.time() - start_time
+    print(f"🎉 Klaar in {duration:.2f} seconden!")
 
 if __name__ == "__main__":
     main()
