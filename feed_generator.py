@@ -29,6 +29,31 @@ CSV_HEADERS = [
     "Address"           
 ]
 
+# Woorden die we NIET aan het einde van een titel willen zien als hij wordt afgekapt
+BAD_ENDINGS = [
+    "en", "of", "tot", "bij", "voor", "de", "het", "een", "in", "met",
+    "ambulant", "klinisch", "coordinerend", "verpleegkundig", "specialist",
+    "psychotherapeut", "begeleider", "high", "intensive", "care", "senior",
+    "junior", "tijdelijk", "vaste", "waarnemend"
+]
+
+# Slimme vervangingen om titels korter te maken zodat ze wel passen (< 25 chars)
+TITLE_REPLACEMENTS = {
+    "Verpleegkundig Specialist": "VS",
+    "Verpleegkundige": "Vpl.",
+    "Gezondheidszorgpsycholoog": "GZ-psycholoog",
+    "Klinisch Psycholoog": "KP",
+    "Psychiater": "Psych.",
+    "Begeleider": "Begl.",
+    "Ambulant": "Amb.",
+    "Spoedeisende Psychiatrie": "SEH Psychiatrie",
+    "Opleiding tot": "Opleiding",
+    "High Intensive Care": "HIC",
+    "Intensive Care": "IC",
+    "Ouderen": "Oud.",
+    "Kinderen": "Kind."
+}
+
 # Geoptimaliseerde mapping op basis van jouw best converterende zoekwoorden
 KEYWORD_MAPPING = {
     'Verpleegkundige': [
@@ -70,7 +95,6 @@ KEYWORD_MAPPING = {
     ]
 }
 
-# Deze "high converting" termen zijn nu locatie-onafhankelijk gemaakt
 BASE_KEYWORDS = [
     "Werken bij GGZ inGeest", "GGZ inGeest vacatures", "Vacatures GGZ inGeest",
     "Werken bij GGZ", "GGZ vacatures", 
@@ -114,23 +138,54 @@ def extract_links_from_sitemap():
 
     return list(vacancy_urls)
 
-def format_google_text(text, max_len=25):
+def clean_forbidden_chars(text):
+    """Verwijdert onnodige tekens zoals , / ? en " uit de tekst."""
     if not text: return ""
+    # Vervang specifieke tekens door spaties of niets
+    text = re.sub(r'[,/?"]', ' ', text)
+    # Dubbele spaties weghalen die hierdoor ontstaan
+    return re.sub(' +', ' ', text).strip()
+
+def format_google_text(text, max_len=25, is_title=False):
+    if not text: return ""
+    
+    # Stap 1: Basis opschoning (HTML weg)
     text = re.sub('<[^<]+?>', '', text)
     text = text.replace('&nbsp;', ' ').replace('\n', ' ').strip()
-    text = re.sub(' +', ' ', text)
+    
+    # Stap 2: Verboden tekens weghalen
+    text = clean_forbidden_chars(text)
     
     if len(text) <= max_len:
         return text
     
-    truncated = text[:max_len]
-    if " " in truncated:
-        truncated = truncated.rsplit(' ', 1)[0]
+    # Stap 3: Als het te lang is, probeer eerst slimme vervangingen (alleen voor titels)
+    if is_title:
+        for long_term, short_term in TITLE_REPLACEMENTS.items():
+            if long_term in text:
+                text = text.replace(long_term, short_term)
     
-    return truncated
+    # Nog steeds te lang? Dan hard afkappen
+    if len(text) > max_len:
+        truncated = text[:max_len]
+        # Zorg dat we niet midden in een woord knippen
+        if " " in truncated:
+            truncated = truncated.rsplit(' ', 1)[0]
+        text = truncated
+        
+    # Stap 4: Check op "rare" eindwoorden (alleen als we hebben ingekort)
+    if is_title:
+        words = text.split()
+        # Zolang het laatste woord in de BAD_ENDINGS lijst staat, haal het weg
+        while words and words[-1].lower() in BAD_ENDINGS:
+            words.pop()
+        text = " ".join(words)
+        
+    return text
 
 def clean_salary(text):
     if not text: return ""
+    text = clean_forbidden_chars(text)
     matches = re.findall(r'€\s?(\d{1,3}\.?\d{0,3})', text)
     if len(matches) >= 2:
         low = matches[0].replace('.', '')
@@ -142,32 +197,32 @@ def clean_salary(text):
     return format_google_text(text, 25)
 
 def generate_keywords(title, category, location):
-    """Genereert een lijst met trefwoorden gescheiden door puntkomma."""
-    # Start met de algemene high-converting termen
+    """Genereert keywords, max 25 items, geen verboden tekens."""
     keywords = list(BASE_KEYWORDS)
     
-    # Voeg categorie specifieke termen toe
     if category in KEYWORD_MAPPING:
         keywords.extend(KEYWORD_MAPPING[category])
     
-    # Voeg locatie toe (ook specifiek als zoekwoord)
     if location:
-        keywords.append(location)
-        # Dynamische zinnen met de specifieke locatie van de vacature
-        keywords.append(f"Vacatures {location}")
-        keywords.append(f"GGZ vacatures {location}")
-        keywords.append(f"GGZ inGeest {location} vacatures")
-        keywords.append(f"Werken bij GGZ {location}")
+        # Schoon de locatie ook op
+        clean_loc = clean_forbidden_chars(location)
+        keywords.append(clean_loc)
+        keywords.append(f"Vacatures {clean_loc}")
+        keywords.append(f"GGZ vacatures {clean_loc}")
+        keywords.append(f"GGZ inGeest {clean_loc} vacatures")
+        keywords.append(f"Werken bij GGZ {clean_loc}")
         
-    # Voeg titel woorden toe (behalve stopwoorden)
     stop_words = ['bij', 'de', 'het', 'een', 'en', 'voor', 'van', 'vacature']
-    title_words = [w for w in title.split() if w.lower() not in stop_words and len(w) > 3]
+    title_words = [clean_forbidden_chars(w) for w in title.split() if w.lower() not in stop_words and len(w) > 3]
     keywords.extend(title_words)
     
-    # Uniek maken en samenvoegen met puntkomma (Google eis)
     unique_keywords = list(set(keywords))
-    # Google heeft soms een limiet op lengte van trefwoordenveld, we pakken de eerste 20 relevante
-    return ";".join(unique_keywords[:25])
+    
+    # Google limiet contextual keywords: We houden het op max 25
+    # En we zorgen dat de puntkomma scheiding goed gaat (geen puntkomma IN de woorden)
+    cleaned_keywords = [k.replace(';', '') for k in unique_keywords if k]
+    
+    return ";".join(cleaned_keywords[:25])
 
 def parse_job_page(url):
     if "vacatures/?view" in url or url.endswith("/vacatures/"):
@@ -183,7 +238,7 @@ def parse_job_page(url):
     job["Image URL"] = DEFAULT_IMAGE
     
     full_title = ""
-    raw_location = "Amsterdam" # Default
+    raw_location = "Amsterdam" 
     raw_salary = ""
 
     try:
@@ -214,9 +269,14 @@ def parse_job_page(url):
         return None
 
     # DATA VULLEN
-    job["Title"] = format_google_text(full_title, 25)
+    # is_title=True activeert de slimme logica om "tot", "en", "ambulant" aan het eind te verwijderen
+    job["Title"] = format_google_text(full_title, 25, is_title=True)
     
-    # Categorie bepalen (Uitgebreid met nieuwe groepen zoals Casemanager)
+    # Als de titel na opschonen leeg of te kort is (bijv. omdat alles is weggeknipt),
+    # val terug op de categorie of eerste woord van originele titel
+    if len(job["Title"]) < 3:
+         job["Title"] = format_google_text(full_title.split()[0], 25)
+    
     categories = [
         'Verpleegkundige', 'Psychiater', 'Begeleider', 'Psycholoog', 
         'Arts', 'ANIOS', 'Casemanager', 'Ervaringsdeskundige', 
@@ -226,7 +286,6 @@ def parse_job_page(url):
     found_cat = "Zorg"
     for cat in categories:
         if cat.lower() in full_title.lower():
-            # Correctie: ANIOS mappen naar 'Arts' voor de mapping dict
             if cat == 'ANIOS':
                 found_cat = 'Arts'
             else:
@@ -237,12 +296,12 @@ def parse_job_page(url):
     job["Subtitle"] = format_google_text(found_cat, 25)
 
     if raw_location:
-        job["Location ID"] = raw_location
-        job["Address"] = f"{raw_location}, NL"
+        clean_loc = clean_forbidden_chars(raw_location)
+        job["Location ID"] = clean_loc
+        job["Address"] = f"{clean_loc} NL" # Komma weggehaald want dat was verboden teken
     
     job["Salary"] = clean_salary(raw_salary)
 
-    # BESCHRIJVING
     desc_div = soup.find('div', class_='vacancy-content') or soup.find('div', class_='content')
     if desc_div:
         for script in desc_div(["script", "style", "iframe"]):
@@ -252,10 +311,8 @@ def parse_job_page(url):
     else:
         job["Description"] = "Bekijk deze vacature"
 
-    # KEYWORDS
     job["Contextual keywords"] = generate_keywords(full_title, found_cat, raw_location)
 
-    # BEELD
     img = soup.find('meta', property='og:image')
     if img:
         job["Image URL"] = img['content']
@@ -266,7 +323,7 @@ def parse_job_page(url):
 # MAIN
 # ------------------------------------------------------------------------------
 def main():
-    print("🚀 Start Scraper v8.1 (Zonder ZZP)")
+    print("🚀 Start Scraper v9.0 (Clean & Smart Titles)")
     links = extract_links_from_sitemap()
     if not links: sys.exit(1)
 
