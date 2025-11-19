@@ -17,7 +17,7 @@ import random
 SITEMAP_URL = "https://werkenbij.ggzingeest.nl/job-sitemap.xml"
 OUTPUT_FILE = "jobs_feed.csv"
 DEFAULT_IMAGE = "https://werkenbij.ggzingeest.nl/wp-content/themes/ggz-ingeest/assets/img/logo.svg"
-MAX_WORKERS = 5  # Aantal tegelijkertijd actieve 'scrapers' (5 is veilig en snel)
+MAX_WORKERS = 5 
 
 # Google Ads "Jobs" Feed Specificaties
 CSV_HEADERS = [
@@ -26,13 +26,16 @@ CSV_HEADERS = [
     "Contextual keywords", "Address"
 ]
 
+# Woorden die we NIET aan het einde van een titel willen zien
 BAD_ENDINGS = [
-    "en", "of", "tot", "bij", "voor", "de", "het", "een", "in", "met",
+    "en", "of", "tot", "bij", "voor", "de", "het", "een", "in", "met", "&",
     "ambulant", "klinisch", "coordinerend", "verpleegkundig", "specialist",
     "psychotherapeut", "begeleider", "high", "intensive", "care", "senior",
-    "junior", "tijdelijk", "vaste", "waarnemend"
+    "junior", "tijdelijk", "vaste", "waarnemend", "bipolaire", "sociale",
+    "inkoop", "coördinator", "coordinator", "medewerker", "functionaris"
 ]
 
+# Slimme vervangingen
 TITLE_REPLACEMENTS = {
     "Verpleegkundig Specialist": "VS",
     "Verpleegkundige": "Vpl.",
@@ -46,7 +49,13 @@ TITLE_REPLACEMENTS = {
     "High Intensive Care": "HIC",
     "Intensive Care": "IC",
     "Ouderen": "Oud.",
-    "Kinderen": "Kind."
+    "Kinderen": "Kind.",
+    "Coördinator": "Coord.",
+    "Coördinerend": "Coord.",
+    "Medewerker": "Medw.",
+    " & ": " en ",
+    "Inkoop": "Ink.",
+    "Contractbeheer": "Contract."
 }
 
 KNOWN_LOCATIONS = [
@@ -81,11 +90,10 @@ BASE_KEYWORDS = [
 ]
 
 # ------------------------------------------------------------------------------
-# SESSION SETUP (VOOR SNELHEID & ROBUUSTHEID)
+# SESSION SETUP
 # ------------------------------------------------------------------------------
 def create_session():
     session = requests.Session()
-    # Retry logica: Probeer 3 keer opnieuw als de server 500/502/503/504 geeft
     retries = Retry(total=3, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
     session.mount('https://', HTTPAdapter(max_retries=retries))
     session.headers.update({
@@ -94,7 +102,6 @@ def create_session():
     })
     return session
 
-# Global session object
 http = create_session()
 
 # ------------------------------------------------------------------------------
@@ -103,7 +110,6 @@ http = create_session()
 
 def get_content(url):
     try:
-        # Timeout iets korter omdat we nu retries hebben
         response = http.get(url, timeout=10)
         response.raise_for_status()
         return response.content
@@ -132,32 +138,33 @@ def extract_links_from_sitemap():
 
 def clean_forbidden_chars(text):
     if not text: return ""
-    text = re.sub(r'[,/?"]', ' ', text)
+    text = re.sub(r'[,/?"“”]', ' ', text)
     return re.sub(' +', ' ', text).strip()
 
 def format_google_text(text, max_len=25, is_title=False):
     if not text: return ""
     text = re.sub('<[^<]+?>', '', text)
     text = text.replace('&nbsp;', ' ').replace('\n', ' ').strip()
-    text = clean_forbidden_chars(text)
-    
-    if len(text) <= max_len:
-        return text
     
     if is_title:
         for long_term, short_term in TITLE_REPLACEMENTS.items():
             if long_term in text:
                 text = text.replace(long_term, short_term)
+
+    text = clean_forbidden_chars(text)
+    
+    if len(text) <= max_len:
+        return text
     
     if len(text) > max_len:
         truncated = text[:max_len]
         if " " in truncated:
             truncated = truncated.rsplit(' ', 1)[0]
         text = truncated
-        
+    
     if is_title:
         words = text.split()
-        while words and words[-1].lower() in BAD_ENDINGS:
+        while words and (words[-1].lower() in BAD_ENDINGS or not words[-1].isalnum()):
             words.pop()
         text = " ".join(words)
         
@@ -198,10 +205,9 @@ def generate_keywords(title, category, location):
     return ";".join(cleaned_keywords[:25])
 
 # ------------------------------------------------------------------------------
-# PARSE FUNCTIE (Nu Thread-Safe gemaakt)
+# PARSE FUNCTIE
 # ------------------------------------------------------------------------------
 def parse_job_page(url):
-    # Kleine random jitter om niet als een bot over te komen bij parallel requests
     time.sleep(random.uniform(0.01, 0.1))
 
     if "vacatures/?view" in url or url.endswith("/vacatures/"):
@@ -211,8 +217,17 @@ def parse_job_page(url):
     if not content: return None
     soup = BeautifulSoup(content, 'html.parser')
 
+    # CORRECTE UTM Tags voor GA4 Paid Search kanaal
+    final_url = url
+    utm_params = "utm_source=google&utm_medium=cpc&utm_campaign=job_feed"
+    
+    if '?' in url:
+        final_url += f"&{utm_params}"
+    else:
+        final_url += f"?{utm_params}"
+
     job = {k: "" for k in CSV_HEADERS}
-    job["Final URL"] = url
+    job["Final URL"] = final_url
     job["Job ID"] = hashlib.md5(url.encode()).hexdigest()[:10]
     job["Image URL"] = DEFAULT_IMAGE
     
@@ -310,11 +325,11 @@ def parse_job_page(url):
     return job
 
 # ------------------------------------------------------------------------------
-# MAIN (Parallel Uitvoering)
+# MAIN
 # ------------------------------------------------------------------------------
 def main():
     start_time = time.time()
-    print(f"🚀 Start Scraper v12.0 (Turbo Mode - {MAX_WORKERS} threads)")
+    print(f"🚀 Start Scraper v14.0 (Correct UTM & All Fixes)")
     
     links = extract_links_from_sitemap()
     if not links: sys.exit(1)
@@ -322,9 +337,7 @@ def main():
     print(f"✅ {len(links)} links gevonden. Start parallelle verwerking...")
     valid_jobs = []
 
-    # Hier gebeurt de magie: We voeren parse_job_page parallel uit
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # We maken een map van URL -> Future object
         future_to_url = {executor.submit(parse_job_page, url): url for url in links}
         
         completed = 0
