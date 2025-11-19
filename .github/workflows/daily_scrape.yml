@@ -1,0 +1,39 @@
+name: Daily Job Feed Scraper
+
+on:
+  schedule:
+    # Draait elke dag om 06:00 's ochtends
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Hiermee kun je hem ook handmatig starten om te testen
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Run scraper
+      run: |
+        python feed_generator.py
+
+    - name: Commit and push feed
+      run: |
+        git config --global user.name 'GitHub Action Bot'
+        git config --global user.email 'action@github.com'
+        git add jobs_feed.csv
+        git commit -m "Update job feed" || echo "Geen wijzigingen om te committen"
+        git push
