@@ -204,6 +204,40 @@ def generate_keywords(title, category, location):
     cleaned_keywords = [k.replace(';', '') for k in unique_keywords if k]
     return ";".join(cleaned_keywords[:25])
 
+def find_image_in_header(soup):
+    """Zoekt de specifieke afbeelding in de header section."""
+    # Stap 1: Zoek in de eerste section van main/article
+    try:
+        main = soup.find('main')
+        if main:
+            article = main.find('article')
+            if article:
+                section = article.find('section')
+                if section:
+                    # Vaak staat de afbeelding als background-image in de style attribute
+                    # We zoeken in de section zelf en directe kinderen
+                    elements_to_check = [section] + section.find_all('div', recursive=True)
+                    
+                    for elem in elements_to_check:
+                        style = elem.get('style', '')
+                        if style and 'background-image' in style:
+                            # Extract URL uit css: background-image: url('...')
+                            match = re.search(r"url\(['\"]?(.*?)['\"]?\)", style)
+                            if match:
+                                img_url = match.group(1)
+                                if 'http' in img_url and 'icon' not in img_url.lower():
+                                    return img_url
+
+                    # Stap 2: Als er geen background image is, zoek een normale <img>
+                    images = section.find_all('img')
+                    for img in images:
+                        src = img.get('src')
+                        if src and 'http' in src and 'logo' not in src.lower() and 'icon' not in src.lower():
+                            return src
+    except Exception:
+        pass
+    return None
+
 # ------------------------------------------------------------------------------
 # PARSE FUNCTIE
 # ------------------------------------------------------------------------------
@@ -217,7 +251,6 @@ def parse_job_page(url):
     if not content: return None
     soup = BeautifulSoup(content, 'html.parser')
 
-    # CORRECTE UTM Tags voor GA4 Paid Search kanaal
     final_url = url
     utm_params = "utm_source=google&utm_medium=cpc&utm_campaign=job_feed"
     
@@ -229,7 +262,18 @@ def parse_job_page(url):
     job = {k: "" for k in CSV_HEADERS}
     job["Final URL"] = final_url
     job["Job ID"] = hashlib.md5(url.encode()).hexdigest()[:10]
-    job["Image URL"] = DEFAULT_IMAGE
+    
+    # NIEUW: Probeer eerst de specifieke header image te vinden
+    specific_image = find_image_in_header(soup)
+    if specific_image:
+        job["Image URL"] = specific_image
+    else:
+        # Fallback naar Open Graph tag
+        og_img = soup.find('meta', property='og:image')
+        if og_img:
+            job["Image URL"] = og_img['content']
+        else:
+            job["Image URL"] = DEFAULT_IMAGE
     
     full_title = ""
     raw_location = "" 
@@ -318,10 +362,6 @@ def parse_job_page(url):
 
     job["Contextual keywords"] = generate_keywords(full_title, found_cat, final_city)
 
-    img = soup.find('meta', property='og:image')
-    if img:
-        job["Image URL"] = img['content']
-
     return job
 
 # ------------------------------------------------------------------------------
@@ -329,7 +369,7 @@ def parse_job_page(url):
 # ------------------------------------------------------------------------------
 def main():
     start_time = time.time()
-    print(f"🚀 Start Scraper v14.0 (Correct UTM & All Fixes)")
+    print(f"🚀 Start Scraper v15.0 (Header Image Fix)")
     
     links = extract_links_from_sitemap()
     if not links: sys.exit(1)
