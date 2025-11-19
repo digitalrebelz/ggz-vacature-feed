@@ -29,7 +29,7 @@ CSV_HEADERS = [
     "Address"           
 ]
 
-# Woorden die we NIET aan het einde van een titel willen zien als hij wordt afgekapt
+# Woorden die we NIET aan het einde van een titel willen zien
 BAD_ENDINGS = [
     "en", "of", "tot", "bij", "voor", "de", "het", "een", "in", "met",
     "ambulant", "klinisch", "coordinerend", "verpleegkundig", "specialist",
@@ -37,7 +37,7 @@ BAD_ENDINGS = [
     "junior", "tijdelijk", "vaste", "waarnemend"
 ]
 
-# Slimme vervangingen om titels korter te maken zodat ze wel passen (< 25 chars)
+# Slimme vervangingen voor titels
 TITLE_REPLACEMENTS = {
     "Verpleegkundig Specialist": "VS",
     "Verpleegkundige": "Vpl.",
@@ -54,45 +54,32 @@ TITLE_REPLACEMENTS = {
     "Kinderen": "Kind."
 }
 
-# Geoptimaliseerde mapping op basis van jouw best converterende zoekwoorden
+# Bekende locaties om te herkennen of een tekst een locatie is
+KNOWN_LOCATIONS = [
+    "Amsterdam", "Haarlem", "Amstelveen", "Hoofddorp", "Bennebroek", 
+    "Badhoevedorp", "Zuid-Kennemerland", "Amstelland"
+]
+
+# Mapping van vage regio-namen naar harde Google Maps steden
+LOCATION_MAPPING = {
+    "Regio Amsterdam-Amstelland en Zuid-Kennemerland": "Amsterdam",
+    "Zuid-Kennemerland": "Haarlem",
+    "Amstelland": "Amstelveen",
+    "Kennemerland": "Haarlem",
+    "Amsterdam-Amstelland": "Amsterdam"
+}
+
 KEYWORD_MAPPING = {
-    'Verpleegkundige': [
-        'Ambulant verpleegkundige', 'GGZ verpleegkundige', 'HBO verpleegkundige', 
-        'Leerling verpleegkundige', 'Verpleging', 'BIG', 'Ziekenhuis', 'Zorg'
-    ],
-    'Psychiater': [
-        'Psychiater vacature', 'Psychiatrie', 'Medisch specialist', 
-        'Arts', 'BIG', 'Zorg', 'GGZ Amsterdam'
-    ],
-    'Begeleider': [
-        'Persoonlijk begeleider', 'Ambulant begeleider', 'Begeleider niveau 4', 
-        'Ambulante begeleiding', 'Maatschappelijke zorg', 'Activiteitenbegeleider', 
-        'Welzijn', 'MBO', 'HBO', 'Begeleider Amsterdam'
-    ],
-    'Psycholoog': [
-        'GZ-psycholoog', 'Klinisch psycholoog', 'Klinisch neuropsycholoog', 
-        'Basispsycholoog', 'Psychologie', 'Behandelaar', 'GGZ'
-    ],
-    'Arts': [
-        'ANIOS psychiatrie', 'Basisarts', 'Geneeskunde', 'Medisch', 
-        'Specialist', 'Zorg', 'Opleidingsplaats'
-    ],
-    'Casemanager': [
-        'Casemanager GGZ', 'Casemanager Amsterdam', 'Ambulante zorg', 
-        'Regiebehandelaar', 'Zorgcoördinatie'
-    ],
-    'Ervaringsdeskundige': [
-        'Ervaringsdeskundigheid', 'Herstel', 'Ondersteuning', 'GGZ ervaringsdeskundige'
-    ],
-    'Ondersteunend': [
-        'Administratie', 'Bedrijfsvoering', 'Kantoor', 'Management', 'Secretariaat'
-    ],
-    'Specialist': [
-        'Specialisme', 'Expertise', 'Zorgprofessional', 'Behandelaar'
-    ],
-    'Zorg': [
-        'Gezondheidszorg', 'Welzijn', 'Hulpverlening', 'Jeugdpsychiatrie', 'Jeugd GGZ'
-    ]
+    'Verpleegkundige': ['Ambulant verpleegkundige', 'GGZ verpleegkundige', 'HBO verpleegkundige', 'Leerling verpleegkundige', 'Verpleging', 'BIG', 'Ziekenhuis', 'Zorg'],
+    'Psychiater': ['Psychiater vacature', 'Psychiatrie', 'Medisch specialist', 'Arts', 'BIG', 'Zorg', 'GGZ Amsterdam'],
+    'Begeleider': ['Persoonlijk begeleider', 'Ambulant begeleider', 'Begeleider niveau 4', 'Ambulante begeleiding', 'Maatschappelijke zorg', 'Activiteitenbegeleider', 'Welzijn', 'MBO', 'HBO', 'Begeleider Amsterdam'],
+    'Psycholoog': ['GZ-psycholoog', 'Klinisch psycholoog', 'Klinisch neuropsycholoog', 'Basispsycholoog', 'Psychologie', 'Behandelaar', 'GGZ'],
+    'Arts': ['ANIOS psychiatrie', 'Basisarts', 'Geneeskunde', 'Medisch', 'Specialist', 'Zorg', 'Opleidingsplaats'],
+    'Casemanager': ['Casemanager GGZ', 'Casemanager Amsterdam', 'Ambulante zorg', 'Regiebehandelaar', 'Zorgcoördinatie'],
+    'Ervaringsdeskundige': ['Ervaringsdeskundigheid', 'Herstel', 'Ondersteuning', 'GGZ ervaringsdeskundige'],
+    'Ondersteunend': ['Administratie', 'Bedrijfsvoering', 'Kantoor', 'Management', 'Secretariaat'],
+    'Specialist': ['Specialisme', 'Expertise', 'Zorgprofessional', 'Behandelaar'],
+    'Zorg': ['Gezondheidszorg', 'Welzijn', 'Hulpverlening', 'Jeugdpsychiatrie', 'Jeugd GGZ']
 }
 
 BASE_KEYWORDS = [
@@ -139,44 +126,32 @@ def extract_links_from_sitemap():
     return list(vacancy_urls)
 
 def clean_forbidden_chars(text):
-    """Verwijdert onnodige tekens zoals , / ? en " uit de tekst."""
     if not text: return ""
-    # Vervang specifieke tekens door spaties of niets
     text = re.sub(r'[,/?"]', ' ', text)
-    # Dubbele spaties weghalen die hierdoor ontstaan
     return re.sub(' +', ' ', text).strip()
 
 def format_google_text(text, max_len=25, is_title=False):
     if not text: return ""
-    
-    # Stap 1: Basis opschoning (HTML weg)
     text = re.sub('<[^<]+?>', '', text)
     text = text.replace('&nbsp;', ' ').replace('\n', ' ').strip()
-    
-    # Stap 2: Verboden tekens weghalen
     text = clean_forbidden_chars(text)
     
     if len(text) <= max_len:
         return text
     
-    # Stap 3: Als het te lang is, probeer eerst slimme vervangingen (alleen voor titels)
     if is_title:
         for long_term, short_term in TITLE_REPLACEMENTS.items():
             if long_term in text:
                 text = text.replace(long_term, short_term)
     
-    # Nog steeds te lang? Dan hard afkappen
     if len(text) > max_len:
         truncated = text[:max_len]
-        # Zorg dat we niet midden in een woord knippen
         if " " in truncated:
             truncated = truncated.rsplit(' ', 1)[0]
         text = truncated
         
-    # Stap 4: Check op "rare" eindwoorden (alleen als we hebben ingekort)
     if is_title:
         words = text.split()
-        # Zolang het laatste woord in de BAD_ENDINGS lijst staat, haal het weg
         while words and words[-1].lower() in BAD_ENDINGS:
             words.pop()
         text = " ".join(words)
@@ -197,14 +172,11 @@ def clean_salary(text):
     return format_google_text(text, 25)
 
 def generate_keywords(title, category, location):
-    """Genereert keywords, max 25 items, geen verboden tekens."""
     keywords = list(BASE_KEYWORDS)
-    
     if category in KEYWORD_MAPPING:
         keywords.extend(KEYWORD_MAPPING[category])
     
     if location:
-        # Schoon de locatie ook op
         clean_loc = clean_forbidden_chars(location)
         keywords.append(clean_loc)
         keywords.append(f"Vacatures {clean_loc}")
@@ -217,11 +189,7 @@ def generate_keywords(title, category, location):
     keywords.extend(title_words)
     
     unique_keywords = list(set(keywords))
-    
-    # Google limiet contextual keywords: We houden het op max 25
-    # En we zorgen dat de puntkomma scheiding goed gaat (geen puntkomma IN de woorden)
     cleaned_keywords = [k.replace(';', '') for k in unique_keywords if k]
-    
     return ";".join(cleaned_keywords[:25])
 
 def parse_job_page(url):
@@ -238,23 +206,40 @@ def parse_job_page(url):
     job["Image URL"] = DEFAULT_IMAGE
     
     full_title = ""
-    raw_location = "Amsterdam" 
+    raw_location = "" 
     raw_salary = ""
 
     try:
+        # HEADER SCRAPING (Smart Detection)
         main = soup.find('main')
         if main:
             article = main.find('article')
             if article:
                 section = article.find('section')
                 if section:
+                    # We zoeken de container met de metadata (uren, locatie, salaris)
                     container = section.find('div').find('div').find_all('div', recursive=False)[0]
                     if container:
                         items = container.find_all('div', recursive=False)
-                        if len(items) >= 2:
-                            raw_location = items[1].get_text(strip=True)
-                        if len(items) >= 3:
-                            raw_salary = items[2].get_text(strip=True)
+                        
+                        # Loop door alle items en bepaal wat wat is op basis van inhoud
+                        for item in items:
+                            text = item.get_text(strip=True)
+                            
+                            # Check 1: Is dit Salaris? (Bevat euro teken)
+                            if '€' in text:
+                                raw_salary = text
+                                continue
+                                
+                            # Check 2: Is dit Uren? (Bevat 'uur' of 'wk')
+                            if 'uur' in text.lower() or '/wk' in text.lower():
+                                continue # Doen we niks mee voor de feed
+                                
+                            # Check 3: Is dit Locatie? (Bevat bekende plaatsnaam of 'Regio')
+                            # We checken of een van de KNOWN_LOCATIONS in de tekst voorkomt
+                            if any(loc in text for loc in KNOWN_LOCATIONS) or "Regio" in text:
+                                raw_location = text
+                                continue
 
         h1 = soup.find('h1')
         if h1:
@@ -268,12 +253,8 @@ def parse_job_page(url):
     if not full_title or full_title.lower() == "vacatures":
         return None
 
-    # DATA VULLEN
-    # is_title=True activeert de slimme logica om "tot", "en", "ambulant" aan het eind te verwijderen
+    # DATA VULLEN & MAPPING TOEPASSEN
     job["Title"] = format_google_text(full_title, 25, is_title=True)
-    
-    # Als de titel na opschonen leeg of te kort is (bijv. omdat alles is weggeknipt),
-    # val terug op de categorie of eerste woord van originele titel
     if len(job["Title"]) < 3:
          job["Title"] = format_google_text(full_title.split()[0], 25)
     
@@ -295,10 +276,31 @@ def parse_job_page(url):
     job["Category"] = found_cat
     job["Subtitle"] = format_google_text(found_cat, 25)
 
+    # LOCATIE LOGICA (Google Ads Proof)
+    final_city = "Amsterdam" # Fallback
+    
     if raw_location:
-        clean_loc = clean_forbidden_chars(raw_location)
-        job["Location ID"] = clean_loc
-        job["Address"] = f"{clean_loc} NL" # Komma weggehaald want dat was verboden teken
+        # 1. Check of we de lange regio naam moeten mappen naar een stad
+        mapped = False
+        for regio, stad in LOCATION_MAPPING.items():
+            if regio in raw_location:
+                final_city = stad
+                mapped = True
+                break
+        
+        # 2. Als er geen mapping is, gebruik de raw location als hij 'schoon' genoeg is
+        if not mapped:
+            # Filter eventuele rare tekens eruit
+            clean_raw = clean_forbidden_chars(raw_location)
+            # Als het lijkt op een stad (kort genoeg), gebruik het
+            if len(clean_raw) < 20:
+                final_city = clean_raw
+            else:
+                # Te lang en geen mapping? Val terug op Amsterdam (veilig)
+                final_city = "Amsterdam"
+
+    job["Location ID"] = final_city
+    job["Address"] = f"{final_city} NL"
     
     job["Salary"] = clean_salary(raw_salary)
 
@@ -311,7 +313,7 @@ def parse_job_page(url):
     else:
         job["Description"] = "Bekijk deze vacature"
 
-    job["Contextual keywords"] = generate_keywords(full_title, found_cat, raw_location)
+    job["Contextual keywords"] = generate_keywords(full_title, found_cat, final_city)
 
     img = soup.find('meta', property='og:image')
     if img:
@@ -323,7 +325,7 @@ def parse_job_page(url):
 # MAIN
 # ------------------------------------------------------------------------------
 def main():
-    print("🚀 Start Scraper v9.0 (Clean & Smart Titles)")
+    print("🚀 Start Scraper v10.0 (Smart Location & Salary Fix)")
     links = extract_links_from_sitemap()
     if not links: sys.exit(1)
 
