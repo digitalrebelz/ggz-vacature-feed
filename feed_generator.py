@@ -20,7 +20,6 @@ DEFAULT_IMAGE = "https://werkenbij.ggzingeest.nl/wp-content/themes/ggz-ingeest/a
 MAX_WORKERS = 5 
 
 # Google Ads "Jobs" Feed Specificaties
-# Toegevoegd: "Similar Job IDs"
 CSV_HEADERS = [
     "Job ID", "Location ID", "Title", "Final URL", "Image URL", 
     "Subtitle", "Description", "Salary", "Category", 
@@ -202,4 +201,207 @@ def generate_keywords(title, category, location):
     keywords.extend(title_words)
     
     unique_keywords = list(set(keywords))
-    cleaned_keywords = [k.replace(';', '') for k in unique_
+    cleaned_keywords = [k.replace(';', '') for k in unique_keywords if k]
+    return ";".join(cleaned_keywords[:25])
+
+def find_image_in_header(soup):
+    try:
+        main = soup.find('main')
+        if main:
+            article = main.find('article')
+            if article:
+                section = article.find('section')
+                if section:
+                    elements_to_check = [section] + section.find_all('div', recursive=True)
+                    for elem in elements_to_check:
+                        style = elem.get('style', '')
+                        if style and 'background-image' in style:
+                            match = re.search(r"url\(['\"]?(.*?)['\"]?\)", style)
+                            if match:
+                                img_url = match.group(1)
+                                if 'http' in img_url and 'icon' not in img_url.lower():
+                                    return img_url
+
+                    images = section.find_all('img')
+                    for img in images:
+                        src = img.get('src')
+                        if src and 'http' in src and 'logo' not in src.lower() and 'icon' not in src.lower():
+                            return src
+    except Exception:
+        pass
+    return None
+
+# ------------------------------------------------------------------------------
+# NABEWERKING: SIMILAR JOBS
+# ------------------------------------------------------------------------------
+def calculate_similar_jobs(jobs):
+    """Berekent en vult de 'Similar Job IDs' kolom voor elke vacature."""
+    print("🔄 Berekenen van vergelijkbare vacatures...")
+    
+    for job in jobs:
+        similar_ids = []
+        my_id = job['Job ID']
+        my_loc = job['Location ID']
+        my_cat = job['Category']
+        my_title = job['Title']
+        
+        for other in jobs:
+            other_id = other['Job ID']
+            if my_id == other_id: continue
+                
+            other_loc = other['Location ID']
+            other_cat = other['Category']
+            other_title = other['Title']
+            
+            if my_loc == other_loc and my_cat == other_cat:
+                similar_ids.append(other_id)
+            elif my_loc != other_loc and my_title.lower() == other_title.lower():
+                similar_ids.append(other_id)
+        
+        job['Similar Job IDs'] = ";".join(similar_ids[:10])
+        
+    return jobs
+
+# ------------------------------------------------------------------------------
+# PARSE FUNCTIE
+# ------------------------------------------------------------------------------
+def parse_job_page(url):
+    time.sleep(random.uniform(0.01, 0.1))
+
+    if "vacatures/?view" in url or url.endswith("/vacatures/"):
+        return None
+
+    content = get_content(url)
+    if not content: return None
+    soup = BeautifulSoup(content, 'html.parser')
+
+    final_url = url
+    utm_params = "utm_source=google&utm_medium=cpc&utm_campaign=job_feed"
+    if '?' in url: final_url += f"&{utm_params}"
+    else: final_url += f"?{utm_params}"
+
+    job = {k: "" for k in CSV_HEADERS}
+    job["Final URL"] = final_url
+    job["Job ID"] = hashlib.md5(url.encode()).hexdigest()[:10]
+    
+    specific_image = find_image_in_header(soup)
+    if specific_image: job["Image URL"] = specific_image
+    else:
+        og_img = soup.find('meta', property='og:image')
+        if og_img: job["Image URL"] = og_img['content']
+        else: job["Image URL"] = DEFAULT_IMAGE
+    
+    full_title = ""
+    raw_location = "" 
+    raw_salary = ""
+
+    try:
+        main = soup.find('main')
+        if main:
+            article = main.find('article')
+            if article:
+                section = article.find('section')
+                if section:
+                    container = section.find('div').find('div').find_all('div', recursive=False)[0]
+                    if container:
+                        items = container.find_all('div', recursive=False)
+                        for item in items:
+                            text = item.get_text(strip=True)
+                            if '€' in text:
+                                raw_salary = text
+                                continue
+                            if 'uur' in text.lower() or '/wk' in text.lower():
+                                continue
+                            if any(loc in text for loc in KNOWN_LOCATIONS) or "Regio" in text:
+                                raw_location = text
+                                continue
+
+        h1 = soup.find('h1')
+        if h1: full_title = h1.get_text(strip=True)
+        elif soup.title: full_title = soup.title.get_text().split('-')[0].strip()
+
+    except Exception: pass
+
+    if not full_title or full_title.lower() == "vacatures": return None
+
+    job["Title"] = format_google_text(full_title, 25, is_title=True)
+    if len(job["Title"]) < 3: job["Title"] = format_google_text(full_title.split()[0], 25)
+    
+    categories = ['Verpleegkundige', 'Psychiater', 'Begeleider', 'Psycholoog', 'Arts', 'ANIOS', 'Casemanager', 'Ervaringsdeskundige', 'Ondersteunend', 'Specialist', 'Agogisch']
+    found_cat = "Zorg"
+    for cat in categories:
+        if cat.lower() in full_title.lower():
+            if cat == 'ANIOS': found_cat = 'Arts'
+            else: found_cat = cat
+            break
+            
+    job["Category"] = found_cat
+    job["Subtitle"] = format_google_text(found_cat, 25)
+
+    final_city = "Amsterdam"
+    if raw_location:
+        mapped = False
+        for regio, stad in LOCATION_MAPPING.items():
+            if regio in raw_location:
+                final_city = stad
+                mapped = True
+                break
+        if not mapped:
+            clean_raw = clean_forbidden_chars(raw_location)
+            if len(clean_raw) < 20: final_city = clean_raw
+
+    job["Location ID"] = final_city
+    job["Address"] = f"{final_city}, NL"
+    job["Salary"] = clean_salary(raw_salary)
+
+    desc_div = soup.find('div', class_='vacancy-content') or soup.find('div', class_='content')
+    if desc_div:
+        for script in desc_div(["script", "style", "iframe"]): script.extract()
+        raw_desc = desc_div.get_text(" ")
+        job["Description"] = format_google_text(raw_desc, 25)
+    else: job["Description"] = "Bekijk deze vacature"
+
+    job["Contextual keywords"] = generate_keywords(full_title, found_cat, final_city)
+
+    return job
+
+# ------------------------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------------------------
+def main():
+    start_time = time.time()
+    print(f"🚀 Start Scraper v16.0 (Met Similar Job IDs)")
+    
+    links = extract_links_from_sitemap()
+    if not links: sys.exit(1)
+
+    print(f"✅ {len(links)} links gevonden. Start parallelle verwerking...")
+    valid_jobs = []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_url = {executor.submit(parse_job_page, url): url for url in links}
+        
+        completed = 0
+        for future in concurrent.futures.as_completed(future_to_url):
+            completed += 1
+            if completed % 20 == 0: print(f"   Voortgang: {completed}/{len(links)}...")
+            
+            try:
+                data = future.result()
+                if data: valid_jobs.append(data)
+            except Exception as exc: print(f"   Fout in thread: {exc}")
+
+    if valid_jobs:
+        valid_jobs = calculate_similar_jobs(valid_jobs)
+
+    print(f"💾 Opslaan van {len(valid_jobs)} vacatures naar {OUTPUT_FILE}...")
+    with open(OUTPUT_FILE, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
+        writer.writeheader()
+        writer.writerows(valid_jobs)
+    
+    duration = time.time() - start_time
+    print(f"🎉 Klaar in {duration:.2f} seconden!")
+
+if __name__ == "__main__":
+    main()
