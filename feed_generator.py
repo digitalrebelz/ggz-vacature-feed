@@ -14,7 +14,68 @@ SITEMAP_URL = "https://werkenbij.ggzingeest.nl/job-sitemap.xml"
 OUTPUT_FILE = "jobs_feed.csv"
 DEFAULT_IMAGE = "https://werkenbij.ggzingeest.nl/wp-content/themes/ggz-ingeest/assets/img/logo.svg"
 
-CSV_HEADERS = ["Job ID", "Location ID", "Title", "Final URL", "Image URL", "Category", "Description", "Salary", "Address"]
+# Google Ads "Jobs" Feed Specificaties
+CSV_HEADERS = [
+    "Job ID",           
+    "Location ID",      
+    "Title",            
+    "Final URL",        
+    "Image URL",        
+    "Subtitle",         
+    "Description",      
+    "Salary",           
+    "Category",         
+    "Contextual keywords", 
+    "Address"           
+]
+
+# Geoptimaliseerde mapping op basis van jouw best converterende zoekwoorden
+KEYWORD_MAPPING = {
+    'Verpleegkundige': [
+        'Ambulant verpleegkundige', 'GGZ verpleegkundige', 'HBO verpleegkundige', 
+        'Leerling verpleegkundige', 'Verpleging', 'BIG', 'Ziekenhuis', 'Zorg'
+    ],
+    'Psychiater': [
+        'Psychiater vacature', 'Psychiatrie', 'Medisch specialist', 
+        'Arts', 'BIG', 'Zorg', 'GGZ Amsterdam'
+    ],
+    'Begeleider': [
+        'Persoonlijk begeleider', 'Ambulant begeleider', 'Begeleider niveau 4', 
+        'Ambulante begeleiding', 'Maatschappelijke zorg', 'Activiteitenbegeleider', 
+        'Welzijn', 'MBO', 'HBO', 'Begeleider Amsterdam'
+    ],
+    'Psycholoog': [
+        'GZ-psycholoog', 'Klinisch psycholoog', 'Klinisch neuropsycholoog', 
+        'Basispsycholoog', 'Psychologie', 'Behandelaar', 'GGZ'
+    ],
+    'Arts': [
+        'ANIOS psychiatrie', 'Basisarts', 'Geneeskunde', 'Medisch', 
+        'Specialist', 'Zorg', 'Opleidingsplaats'
+    ],
+    'Casemanager': [
+        'Casemanager GGZ', 'Casemanager Amsterdam', 'Ambulante zorg', 
+        'Regiebehandelaar', 'Zorgcoördinatie'
+    ],
+    'Ervaringsdeskundige': [
+        'Ervaringsdeskundigheid', 'Herstel', 'Ondersteuning', 'GGZ ervaringsdeskundige'
+    ],
+    'Ondersteunend': [
+        'Administratie', 'Bedrijfsvoering', 'Kantoor', 'Management', 'Secretariaat'
+    ],
+    'Specialist': [
+        'Specialisme', 'Expertise', 'Zorgprofessional', 'Behandelaar'
+    ],
+    'Zorg': [
+        'Gezondheidszorg', 'Welzijn', 'Hulpverlening', 'Jeugdpsychiatrie', 'Jeugd GGZ'
+    ]
+}
+
+# Deze "high converting" termen zijn nu locatie-onafhankelijk gemaakt
+BASE_KEYWORDS = [
+    "Werken bij GGZ inGeest", "GGZ inGeest vacatures", "Vacatures GGZ inGeest",
+    "Werken bij GGZ", "GGZ vacatures", 
+    "Vacatures inGeest", "Werken in de GGZ"
+]
 
 # ------------------------------------------------------------------------------
 # HULP FUNCTIES
@@ -53,15 +114,62 @@ def extract_links_from_sitemap():
 
     return list(vacancy_urls)
 
-def clean_text(text):
+def format_google_text(text, max_len=25):
     if not text: return ""
     text = re.sub('<[^<]+?>', '', text)
-    text = text.replace('&nbsp;', ' ').replace('iframe', '')
-    text = text.replace('\n', ' ').replace('\r', '').strip()
-    return re.sub(' +', ' ', text)
+    text = text.replace('&nbsp;', ' ').replace('\n', ' ').strip()
+    text = re.sub(' +', ' ', text)
+    
+    if len(text) <= max_len:
+        return text
+    
+    truncated = text[:max_len]
+    if " " in truncated:
+        truncated = truncated.rsplit(' ', 1)[0]
+    
+    return truncated
+
+def clean_salary(text):
+    if not text: return ""
+    matches = re.findall(r'€\s?(\d{1,3}\.?\d{0,3})', text)
+    if len(matches) >= 2:
+        low = matches[0].replace('.', '')
+        high = matches[1].replace('.', '')
+        return f"€{low}-€{high}"
+    elif len(matches) == 1:
+        val = matches[0].replace('.', '')
+        return f"€{val}"
+    return format_google_text(text, 25)
+
+def generate_keywords(title, category, location):
+    """Genereert een lijst met trefwoorden gescheiden door puntkomma."""
+    # Start met de algemene high-converting termen
+    keywords = list(BASE_KEYWORDS)
+    
+    # Voeg categorie specifieke termen toe
+    if category in KEYWORD_MAPPING:
+        keywords.extend(KEYWORD_MAPPING[category])
+    
+    # Voeg locatie toe (ook specifiek als zoekwoord)
+    if location:
+        keywords.append(location)
+        # Dynamische zinnen met de specifieke locatie van de vacature
+        keywords.append(f"Vacatures {location}")
+        keywords.append(f"GGZ vacatures {location}")
+        keywords.append(f"GGZ inGeest {location} vacatures")
+        keywords.append(f"Werken bij GGZ {location}")
+        
+    # Voeg titel woorden toe (behalve stopwoorden)
+    stop_words = ['bij', 'de', 'het', 'een', 'en', 'voor', 'van', 'vacature']
+    title_words = [w for w in title.split() if w.lower() not in stop_words and len(w) > 3]
+    keywords.extend(title_words)
+    
+    # Uniek maken en samenvoegen met puntkomma (Google eis)
+    unique_keywords = list(set(keywords))
+    # Google heeft soms een limiet op lengte van trefwoordenveld, we pakken de eerste 20 relevante
+    return ";".join(unique_keywords[:25])
 
 def parse_job_page(url):
-    # Filter overzichtspagina's
     if "vacatures/?view" in url or url.endswith("/vacatures/"):
         return None
 
@@ -74,88 +182,80 @@ def parse_job_page(url):
     job["Job ID"] = hashlib.md5(url.encode()).hexdigest()[:10]
     job["Image URL"] = DEFAULT_IMAGE
     
-    # 1. TITEL
-    h1 = soup.find('h1')
-    if h1:
-        job["Title"] = h1.get_text(strip=True)
-    elif soup.title:
-        job["Title"] = soup.title.get_text().split('-')[0].strip()
-    
-    if not job["Title"] or job["Title"].lower() == "vacatures":
-        return None
+    full_title = ""
+    raw_location = "Amsterdam" # Default
+    raw_salary = ""
 
-    # 2. INTELLIGENTE SCRAPER (Gebaseerd op jouw XPath)
-    # XPath: /html/body/main/article/section[1]/div/div/div[1]/div[x]
     try:
-        # Navigeer door de structuur zoals in de XPath
         main = soup.find('main')
         if main:
             article = main.find('article')
             if article:
-                # Eerste section
                 section = article.find('section')
                 if section:
-                    # div > div > div (container van de metadata blokjes)
                     container = section.find('div').find('div').find_all('div', recursive=False)[0]
                     if container:
                         items = container.find_all('div', recursive=False)
-                        
-                        # Item 2 is Locatie (index 1 in Python)
                         if len(items) >= 2:
-                            loc_text = items[1].get_text(strip=True)
-                            if loc_text:
-                                job["Address"] = f"{loc_text}, Nederland"
-                                job["Location ID"] = loc_text
-
-                        # Item 3 is Salaris (index 2 in Python)
+                            raw_location = items[1].get_text(strip=True)
                         if len(items) >= 3:
-                            sal_text = items[2].get_text(strip=True)
-                            # Soms staat er tekst voor, we pakken de hele string want die is netjes
-                            if "€" in sal_text or "schaal" in sal_text.lower():
-                                job["Salary"] = sal_text
-    except Exception as e:
-        pass # Faalt stilzwijgend, valt terug op fallback hieronder
+                            raw_salary = items[2].get_text(strip=True)
 
-    # 3. FALLBACKS (Als bovenstaande faalt)
+        h1 = soup.find('h1')
+        if h1:
+            full_title = h1.get_text(strip=True)
+        elif soup.title:
+            full_title = soup.title.get_text().split('-')[0].strip()
+
+    except Exception:
+        pass
+
+    if not full_title or full_title.lower() == "vacatures":
+        return None
+
+    # DATA VULLEN
+    job["Title"] = format_google_text(full_title, 25)
     
-    # Fallback Locatie
-    if not job["Address"]:
-        locaties = ["Amsterdam", "Haarlem", "Hoofddorp", "Amstelveen", "Bennebroek", "Badhoevedorp"]
-        full_text = soup.get_text()
-        for loc in locaties:
-            if loc in full_text:
-                job["Address"] = f"{loc}, Nederland"
-                job["Location ID"] = loc
-                break
-        if not job["Address"]:
-            job["Address"] = "Regio Noord-Holland, Nederland"
+    # Categorie bepalen (Uitgebreid met nieuwe groepen zoals Casemanager)
+    categories = [
+        'Verpleegkundige', 'Psychiater', 'Begeleider', 'Psycholoog', 
+        'Arts', 'ANIOS', 'Casemanager', 'Ervaringsdeskundige', 
+        'Ondersteunend', 'Specialist', 'Agogisch'
+    ]
+    
+    found_cat = "Zorg"
+    for cat in categories:
+        if cat.lower() in full_title.lower():
+            # Correctie: ANIOS mappen naar 'Arts' voor de mapping dict
+            if cat == 'ANIOS':
+                found_cat = 'Arts'
+            else:
+                found_cat = cat
+            break
+            
+    job["Category"] = found_cat
+    job["Subtitle"] = format_google_text(found_cat, 25)
 
-    # Fallback Salaris (Regex)
-    if not job["Salary"]:
-        salary_match = re.search(r'€\s?(\d{1,3}\.?\d{0,3}).*?€\s?(\d{1,3}\.?\d{0,3})', soup.get_text())
-        if salary_match:
-            job["Salary"] = salary_match.group(0).replace('.', '')
+    if raw_location:
+        job["Location ID"] = raw_location
+        job["Address"] = f"{raw_location}, NL"
+    
+    job["Salary"] = clean_salary(raw_salary)
 
-    # 4. BESCHRIJVING
-    desc_div = soup.find('div', class_='vacancy-content') or soup.find('div', class_='content') or soup.find('div', id='content')
+    # BESCHRIJVING
+    desc_div = soup.find('div', class_='vacancy-content') or soup.find('div', class_='content')
     if desc_div:
         for script in desc_div(["script", "style", "iframe"]):
             script.extract()
-        job["Description"] = clean_text(desc_div.get_text(" "))[:250] + "..."
+        raw_desc = desc_div.get_text(" ")
+        job["Description"] = format_google_text(raw_desc, 25)
     else:
-        meta = soup.find('meta', attrs={'name': 'description'})
-        if meta:
-            job["Description"] = meta.get('content', '')[:250]
+        job["Description"] = "Bekijk deze vacature"
 
-    # 5. CATEGORIE
-    categories = ['Verpleegkundige', 'Psychiater', 'Begeleider', 'Psycholoog', 'Arts', 'Ondersteunend', 'Specialist']
-    for cat in categories:
-        if cat.lower() in job["Title"].lower():
-            job["Category"] = cat
-            break
-    if not job["Category"]: job["Category"] = "Zorg"
+    # KEYWORDS
+    job["Contextual keywords"] = generate_keywords(full_title, found_cat, raw_location)
 
-    # 6. BEELD
+    # BEELD
     img = soup.find('meta', property='og:image')
     if img:
         job["Image URL"] = img['content']
@@ -166,7 +266,7 @@ def parse_job_page(url):
 # MAIN
 # ------------------------------------------------------------------------------
 def main():
-    print("🚀 Start Scraper v4.0 (XPath Logic)")
+    print("🚀 Start Scraper v8.1 (Zonder ZZP)")
     links = extract_links_from_sitemap()
     if not links: sys.exit(1)
 
