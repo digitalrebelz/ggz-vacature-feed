@@ -16,15 +16,19 @@ import random
 # ------------------------------------------------------------------------------
 SITEMAP_URL = "https://werkenbij.ggzingeest.nl/job-sitemap.xml"
 OUTPUT_FILE = "jobs_feed.csv"
+DSA_OUTPUT_FILE = "dsa_feed.csv" # NIEUW: Bestand voor Search campagnes
 DEFAULT_IMAGE = "https://werkenbij.ggzingeest.nl/wp-content/themes/ggz-ingeest/assets/img/logo.svg"
 MAX_WORKERS = 5 
 
-# Google Ads "Jobs" Feed Specificaties
+# Google Ads "Jobs" Feed Specificaties (Voor Display)
 CSV_HEADERS = [
     "Job ID", "Location ID", "Title", "Final URL", "Image URL", 
     "Subtitle", "Description", "Salary", "Category", 
     "Contextual keywords", "Address", "Similar Job IDs"
 ]
+
+# Google Ads "Page" Feed Specificaties (Voor Search/DSA)
+DSA_HEADERS = ["Page URL", "Custom Label"]
 
 # Woorden die we NIET aan het einde van een titel willen zien
 BAD_ENDINGS = [
@@ -231,13 +235,8 @@ def find_image_in_header(soup):
         pass
     return None
 
-# ------------------------------------------------------------------------------
-# NABEWERKING: SIMILAR JOBS
-# ------------------------------------------------------------------------------
 def calculate_similar_jobs(jobs):
-    """Berekent en vult de 'Similar Job IDs' kolom voor elke vacature."""
     print("🔄 Berekenen van vergelijkbare vacatures...")
-    
     for job in jobs:
         similar_ids = []
         my_id = job['Job ID']
@@ -248,7 +247,6 @@ def calculate_similar_jobs(jobs):
         for other in jobs:
             other_id = other['Job ID']
             if my_id == other_id: continue
-                
             other_loc = other['Location ID']
             other_cat = other['Category']
             other_title = other['Title']
@@ -259,7 +257,6 @@ def calculate_similar_jobs(jobs):
                 similar_ids.append(other_id)
         
         job['Similar Job IDs'] = ";".join(similar_ids[:10])
-        
     return jobs
 
 # ------------------------------------------------------------------------------
@@ -370,7 +367,7 @@ def parse_job_page(url):
 # ------------------------------------------------------------------------------
 def main():
     start_time = time.time()
-    print(f"🚀 Start Scraper v16.0 (Met Similar Job IDs)")
+    print(f"🚀 Start Scraper v17.0 (Jobs + DSA Feed Generator)")
     
     links = extract_links_from_sitemap()
     if not links: sys.exit(1)
@@ -380,12 +377,10 @@ def main():
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_url = {executor.submit(parse_job_page, url): url for url in links}
-        
         completed = 0
         for future in concurrent.futures.as_completed(future_to_url):
             completed += 1
             if completed % 20 == 0: print(f"   Voortgang: {completed}/{len(links)}...")
-            
             try:
                 data = future.result()
                 if data: valid_jobs.append(data)
@@ -394,14 +389,30 @@ def main():
     if valid_jobs:
         valid_jobs = calculate_similar_jobs(valid_jobs)
 
-    print(f"💾 Opslaan van {len(valid_jobs)} vacatures naar {OUTPUT_FILE}...")
+    # STAP 1: SCHRIJF JOBS FEED (VOOR DISPLAY/REMARKETING)
+    print(f"💾 Opslaan {OUTPUT_FILE} (Vacature Feed)...")
     with open(OUTPUT_FILE, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
         writer.writeheader()
         writer.writerows(valid_jobs)
+
+    # STAP 2: SCHRIJF DSA FEED (VOOR SEARCH PAGINAFEEDS)
+    print(f"💾 Opslaan {DSA_OUTPUT_FILE} (Page Feed)...")
+    try:
+        with open(DSA_OUTPUT_FILE, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=DSA_HEADERS)
+            writer.writeheader()
+            for job in valid_jobs:
+                # We mappen de data naar het simpele formaat: Page URL, Custom Label
+                writer.writerow({
+                    "Page URL": job["Final URL"],
+                    "Custom Label": job["Category"] # Gebruik Categorie als label
+                })
+    except Exception as e:
+        print(f"Fout bij schrijven DSA feed: {e}")
     
     duration = time.time() - start_time
-    print(f"🎉 Klaar in {duration:.2f} seconden!")
+    print(f"🎉 Klaar in {duration:.2f} seconden! Twee feeds gegenereerd.")
 
 if __name__ == "__main__":
     main()
