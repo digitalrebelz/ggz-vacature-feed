@@ -4,7 +4,7 @@ on:
   schedule:
     # Draait elke dag om 06:00 's ochtends
     - cron: '0 6 * * *'
-  workflow_dispatch: # Hiermee kun je hem ook handmatig starten om te testen
+  workflow_dispatch: # Hiermee kun je hem ook handmatig starten
 
 permissions:
   contents: write
@@ -35,5 +35,6 @@ jobs:
         git config --global user.name 'GitHub Action Bot'
         git config --global user.email 'action@github.com'
         git add jobs_feed.csv
-        git commit -m "Update job feed" || echo "Geen wijzigingen om te committen"
+        git add dsa_feed.csv
+        git commit -m "Update job feeds" || echo "Geen wijzigingen om te committen"
         git push
