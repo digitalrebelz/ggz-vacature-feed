@@ -20,35 +20,41 @@ DSA_OUTPUT_FILE = "dsa_feed.csv"
 MAX_WORKERS = 5 
 
 # ------------------------------------------------------------------------------
-# HUISSTIJL VLAKKEN (OFFICIAL BRAND COLORS)
+# STOCK FOTO MAPPING (JOUW SELECTIE)
 # ------------------------------------------------------------------------------
-# We gebruiken placehold.co om 'live' gekleurde vlakken te genereren.
-# Kleuren aangeleverd door gebruiker (hashes verwijderd voor URL):
-COLOR_MAGENTA = "c8007f"  # Hoofdkleur (Krachtig)
-COLOR_LILAC   = "deceff"  # Steunkleur (Zacht)
-# COLOR_WHITE = "f9f6f8"  # Te licht voor een advertentievlak, dus die slaan we over
-
-# Fallback image
-DEFAULT_IMAGE = f"https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png"
+# URL's zijn aangepast naar 1200x628 formaat voor Google Ads optimalisatie.
 
 IMAGE_MAPPING = {
-    # Kernbehandelaars & Medisch -> Magenta
-    'Psychiater': f'https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png',
-    'Arts': f'https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png',
-    'Specialist': f'https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png',
-    'Verpleegkundige': f'https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png',
-    'Psycholoog': f'https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png',
+    # Arts: Vrouwelijk, witte jas, gesprek
+    'Arts': 'https://images.unsplash.com/photo-1631217871099-88310a909a32?q=80&w=1200&h=628&auto=format&fit=crop',
     
-    # Begeleiding & Ondersteuning -> Lila (Fris & Toegankelijk)
-    'Casemanager': f'https://placehold.co/1200x628/{COLOR_LILAC}/{COLOR_LILAC}.png',
-    'Begeleider': f'https://placehold.co/1200x628/{COLOR_LILAC}/{COLOR_LILAC}.png',
-    'Agogisch': f'https://placehold.co/1200x628/{COLOR_LILAC}/{COLOR_LILAC}.png',
-    'Ervaringsdeskundige': f'https://placehold.co/1200x628/{COLOR_LILAC}/{COLOR_LILAC}.png',
-    'Ondersteunend': f'https://placehold.co/1200x628/{COLOR_LILAC}/{COLOR_LILAC}.png',
+    # Psychiater / Specialist / Psycholoog: Gespreksetting
+    'Psychiater': 'https://images.unsplash.com/photo-1714976694810-85add1a29c96?q=80&w=1200&h=628&auto=format&fit=crop',
+    'Specialist': 'https://images.unsplash.com/photo-1714976694810-85add1a29c96?q=80&w=1200&h=628&auto=format&fit=crop',
+    'Psycholoog': 'https://images.unsplash.com/photo-1714976694810-85add1a29c96?q=80&w=1200&h=628&auto=format&fit=crop',
+
+    # Verpleegkundige: Zorgzaam
+    'Verpleegkundige': 'https://images.unsplash.com/photo-1631217868264-e5b90bb7e133?q=80&w=1200&h=628&auto=format&fit=crop',
+    
+    # Begeleider / Agogisch: Activiteit/Sociaal
+    'Begeleider': 'https://images.unsplash.com/photo-1663780887563-bfe3b3550de1?q=80&w=1200&h=628&auto=format&fit=crop',
+    'Agogisch': 'https://images.unsplash.com/photo-1663780887563-bfe3b3550de1?q=80&w=1200&h=628&auto=format&fit=crop',
+    
+    # Casemanager: Ambulant
+    'Casemanager': 'https://images.unsplash.com/photo-1758611971095-87f590f8c4ed?q=80&w=1200&h=628&auto=format&fit=crop',
+    
+    # Ervaringsdeskundige (De foto die je eerder goed vond)
+    'Ervaringsdeskundige': 'https://images.unsplash.com/photo-1582213782179-e0d53f98f2ca?auto=format&fit=crop&crop=faces&w=1200&h=628&q=80',
+    
+    # Ondersteunend: Kantoor
+    'Ondersteunend': 'https://images.unsplash.com/photo-1713946598501-d6b32e7c2464?q=80&w=1200&h=628&auto=format&fit=crop',
     
     # Fallback
-    'Zorg': f'https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png'
+    'Zorg': 'https://plus.unsplash.com/premium_photo-1731540602286-05ebb2078c83?q=80&w=1200&h=628&auto=format&fit=crop'
 }
+
+# Fallback image
+DEFAULT_IMAGE = IMAGE_MAPPING['Zorg']
 
 # ------------------------------------------------------------------------------
 # SPECIFICATIES
@@ -239,7 +245,7 @@ def calculate_similar_jobs(jobs):
     return jobs
 
 # ------------------------------------------------------------------------------
-# PARSE FUNCTIE (Met Brand Color Mapping)
+# PARSE FUNCTIE
 # ------------------------------------------------------------------------------
 def parse_job_page(url):
     time.sleep(random.uniform(0.01, 0.1))
@@ -273,7 +279,7 @@ def parse_job_page(url):
     job["Category"] = found_cat
     job["Subtitle"] = format_google_text(found_cat, 25)
 
-    # AFBEELDING KIEZEN: HUISSTIJL VLAKKEN
+    # AFBEELDING KIEZEN: STOCK FOTOS (Geforceerd)
     if found_cat in IMAGE_MAPPING:
         job["Image URL"] = IMAGE_MAPPING[found_cat]
     else:
@@ -338,7 +344,7 @@ def parse_job_page(url):
 # ------------------------------------------------------------------------------
 def main():
     start_time = time.time()
-    print(f"🚀 Start Scraper v20.0 (Official Brand Colors)")
+    print(f"🚀 Start Scraper v25.0 (Final User Selection)")
     links = extract_links_from_sitemap()
     if not links: sys.exit(1)
     print(f"✅ {len(links)} links gevonden. Start parallelle verwerking...")
