@@ -16,21 +16,50 @@ import random
 # ------------------------------------------------------------------------------
 SITEMAP_URL = "https://werkenbij.ggzingeest.nl/job-sitemap.xml"
 OUTPUT_FILE = "jobs_feed.csv"
-DSA_OUTPUT_FILE = "dsa_feed.csv" # NIEUW: Bestand voor Search campagnes
-DEFAULT_IMAGE = "https://werkenbij.ggzingeest.nl/wp-content/themes/ggz-ingeest/assets/img/logo.svg"
+DSA_OUTPUT_FILE = "dsa_feed.csv"
 MAX_WORKERS = 5 
 
-# Google Ads "Jobs" Feed Specificaties (Voor Display)
+# ------------------------------------------------------------------------------
+# HUISSTIJL VLAKKEN (OFFICIAL BRAND COLORS)
+# ------------------------------------------------------------------------------
+# We gebruiken placehold.co om 'live' gekleurde vlakken te genereren.
+# Kleuren aangeleverd door gebruiker (hashes verwijderd voor URL):
+COLOR_MAGENTA = "c8007f"  # Hoofdkleur (Krachtig)
+COLOR_LILAC   = "deceff"  # Steunkleur (Zacht)
+# COLOR_WHITE = "f9f6f8"  # Te licht voor een advertentievlak, dus die slaan we over
+
+# Fallback image
+DEFAULT_IMAGE = f"https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png"
+
+IMAGE_MAPPING = {
+    # Kernbehandelaars & Medisch -> Magenta
+    'Psychiater': f'https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png',
+    'Arts': f'https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png',
+    'Specialist': f'https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png',
+    'Verpleegkundige': f'https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png',
+    'Psycholoog': f'https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png',
+    
+    # Begeleiding & Ondersteuning -> Lila (Fris & Toegankelijk)
+    'Casemanager': f'https://placehold.co/1200x628/{COLOR_LILAC}/{COLOR_LILAC}.png',
+    'Begeleider': f'https://placehold.co/1200x628/{COLOR_LILAC}/{COLOR_LILAC}.png',
+    'Agogisch': f'https://placehold.co/1200x628/{COLOR_LILAC}/{COLOR_LILAC}.png',
+    'Ervaringsdeskundige': f'https://placehold.co/1200x628/{COLOR_LILAC}/{COLOR_LILAC}.png',
+    'Ondersteunend': f'https://placehold.co/1200x628/{COLOR_LILAC}/{COLOR_LILAC}.png',
+    
+    # Fallback
+    'Zorg': f'https://placehold.co/1200x628/{COLOR_MAGENTA}/{COLOR_MAGENTA}.png'
+}
+
+# ------------------------------------------------------------------------------
+# SPECIFICATIES
+# ------------------------------------------------------------------------------
 CSV_HEADERS = [
     "Job ID", "Location ID", "Title", "Final URL", "Image URL", 
     "Subtitle", "Description", "Salary", "Category", 
     "Contextual keywords", "Address", "Similar Job IDs"
 ]
-
-# Google Ads "Page" Feed Specificaties (Voor Search/DSA)
 DSA_HEADERS = ["Page URL", "Custom Label"]
 
-# Woorden die we NIET aan het einde van een titel willen zien
 BAD_ENDINGS = [
     "en", "of", "tot", "bij", "voor", "de", "het", "een", "in", "met", "&",
     "ambulant", "klinisch", "coordinerend", "verpleegkundig", "specialist",
@@ -39,7 +68,6 @@ BAD_ENDINGS = [
     "inkoop", "coördinator", "coordinator", "medewerker", "functionaris"
 ]
 
-# Slimme vervangingen
 TITLE_REPLACEMENTS = {
     "Verpleegkundig Specialist": "VS",
     "Verpleegkundige": "Vpl.",
@@ -93,9 +121,6 @@ BASE_KEYWORDS = [
     "Werken bij GGZ", "GGZ vacatures", "Vacatures inGeest", "Werken in de GGZ"
 ]
 
-# ------------------------------------------------------------------------------
-# SESSION SETUP
-# ------------------------------------------------------------------------------
 def create_session():
     session = requests.Session()
     retries = Retry(total=3, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
@@ -107,10 +132,6 @@ def create_session():
     return session
 
 http = create_session()
-
-# ------------------------------------------------------------------------------
-# HULP FUNCTIES
-# ------------------------------------------------------------------------------
 
 def get_content(url):
     try:
@@ -126,7 +147,6 @@ def extract_links_from_sitemap():
     vacancy_urls = set()
     content = get_content(SITEMAP_URL)
     if not content: return []
-
     try:
         root = ET.fromstring(content)
         for child in root.iter():
@@ -149,29 +169,21 @@ def format_google_text(text, max_len=25, is_title=False):
     if not text: return ""
     text = re.sub('<[^<]+?>', '', text)
     text = text.replace('&nbsp;', ' ').replace('\n', ' ').strip()
-    
     if is_title:
         for long_term, short_term in TITLE_REPLACEMENTS.items():
             if long_term in text:
                 text = text.replace(long_term, short_term)
-
     text = clean_forbidden_chars(text)
-    
-    if len(text) <= max_len:
-        return text
-    
+    if len(text) <= max_len: return text
     if len(text) > max_len:
         truncated = text[:max_len]
-        if " " in truncated:
-            truncated = truncated.rsplit(' ', 1)[0]
+        if " " in truncated: truncated = truncated.rsplit(' ', 1)[0]
         text = truncated
-    
     if is_title:
         words = text.split()
         while words and (words[-1].lower() in BAD_ENDINGS or not words[-1].isalnum()):
             words.pop()
         text = " ".join(words)
-        
     return text
 
 def clean_salary(text):
@@ -191,7 +203,6 @@ def generate_keywords(title, category, location):
     keywords = list(BASE_KEYWORDS)
     if category in KEYWORD_MAPPING:
         keywords.extend(KEYWORD_MAPPING[category])
-    
     if location:
         clean_loc = clean_forbidden_chars(location)
         keywords.append(clean_loc)
@@ -199,41 +210,12 @@ def generate_keywords(title, category, location):
         keywords.append(f"GGZ vacatures {clean_loc}")
         keywords.append(f"GGZ inGeest {clean_loc} vacatures")
         keywords.append(f"Werken bij GGZ {clean_loc}")
-        
     stop_words = ['bij', 'de', 'het', 'een', 'en', 'voor', 'van', 'vacature']
     title_words = [clean_forbidden_chars(w) for w in title.split() if w.lower() not in stop_words and len(w) > 3]
     keywords.extend(title_words)
-    
     unique_keywords = list(set(keywords))
     cleaned_keywords = [k.replace(';', '') for k in unique_keywords if k]
     return ";".join(cleaned_keywords[:25])
-
-def find_image_in_header(soup):
-    try:
-        main = soup.find('main')
-        if main:
-            article = main.find('article')
-            if article:
-                section = article.find('section')
-                if section:
-                    elements_to_check = [section] + section.find_all('div', recursive=True)
-                    for elem in elements_to_check:
-                        style = elem.get('style', '')
-                        if style and 'background-image' in style:
-                            match = re.search(r"url\(['\"]?(.*?)['\"]?\)", style)
-                            if match:
-                                img_url = match.group(1)
-                                if 'http' in img_url and 'icon' not in img_url.lower():
-                                    return img_url
-
-                    images = section.find_all('img')
-                    for img in images:
-                        src = img.get('src')
-                        if src and 'http' in src and 'logo' not in src.lower() and 'icon' not in src.lower():
-                            return src
-    except Exception:
-        pass
-    return None
 
 def calculate_similar_jobs(jobs):
     print("🔄 Berekenen van vergelijkbare vacatures...")
@@ -243,31 +225,25 @@ def calculate_similar_jobs(jobs):
         my_loc = job['Location ID']
         my_cat = job['Category']
         my_title = job['Title']
-        
         for other in jobs:
             other_id = other['Job ID']
             if my_id == other_id: continue
             other_loc = other['Location ID']
             other_cat = other['Category']
             other_title = other['Title']
-            
             if my_loc == other_loc and my_cat == other_cat:
                 similar_ids.append(other_id)
             elif my_loc != other_loc and my_title.lower() == other_title.lower():
                 similar_ids.append(other_id)
-        
         job['Similar Job IDs'] = ";".join(similar_ids[:10])
     return jobs
 
 # ------------------------------------------------------------------------------
-# PARSE FUNCTIE
+# PARSE FUNCTIE (Met Brand Color Mapping)
 # ------------------------------------------------------------------------------
 def parse_job_page(url):
     time.sleep(random.uniform(0.01, 0.1))
-
-    if "vacatures/?view" in url or url.endswith("/vacatures/"):
-        return None
-
+    if "vacatures/?view" in url or url.endswith("/vacatures/"): return None
     content = get_content(url)
     if not content: return None
     soup = BeautifulSoup(content, 'html.parser')
@@ -281,17 +257,30 @@ def parse_job_page(url):
     job["Final URL"] = final_url
     job["Job ID"] = hashlib.md5(url.encode()).hexdigest()[:10]
     
-    specific_image = find_image_in_header(soup)
-    if specific_image: job["Image URL"] = specific_image
-    else:
-        og_img = soup.find('meta', property='og:image')
-        if og_img: job["Image URL"] = og_img['content']
-        else: job["Image URL"] = DEFAULT_IMAGE
-    
     full_title = ""
+    h1 = soup.find('h1')
+    if h1: full_title = h1.get_text(strip=True)
+    elif soup.title: full_title = soup.title.get_text().split('-')[0].strip()
+    if not full_title or full_title.lower() == "vacatures": return None
+    
+    categories = ['Verpleegkundige', 'Psychiater', 'Begeleider', 'Psycholoog', 'Arts', 'ANIOS', 'Casemanager', 'Ervaringsdeskundige', 'Ondersteunend', 'Specialist', 'Agogisch']
+    found_cat = "Zorg"
+    for cat in categories:
+        if cat.lower() in full_title.lower():
+            if cat == 'ANIOS': found_cat = 'Arts'
+            else: found_cat = cat
+            break
+    job["Category"] = found_cat
+    job["Subtitle"] = format_google_text(found_cat, 25)
+
+    # AFBEELDING KIEZEN: HUISSTIJL VLAKKEN
+    if found_cat in IMAGE_MAPPING:
+        job["Image URL"] = IMAGE_MAPPING[found_cat]
+    else:
+        job["Image URL"] = DEFAULT_IMAGE
+
     raw_location = "" 
     raw_salary = ""
-
     try:
         main = soup.find('main')
         if main:
@@ -312,28 +301,10 @@ def parse_job_page(url):
                             if any(loc in text for loc in KNOWN_LOCATIONS) or "Regio" in text:
                                 raw_location = text
                                 continue
-
-        h1 = soup.find('h1')
-        if h1: full_title = h1.get_text(strip=True)
-        elif soup.title: full_title = soup.title.get_text().split('-')[0].strip()
-
     except Exception: pass
-
-    if not full_title or full_title.lower() == "vacatures": return None
 
     job["Title"] = format_google_text(full_title, 25, is_title=True)
     if len(job["Title"]) < 3: job["Title"] = format_google_text(full_title.split()[0], 25)
-    
-    categories = ['Verpleegkundige', 'Psychiater', 'Begeleider', 'Psycholoog', 'Arts', 'ANIOS', 'Casemanager', 'Ervaringsdeskundige', 'Ondersteunend', 'Specialist', 'Agogisch']
-    found_cat = "Zorg"
-    for cat in categories:
-        if cat.lower() in full_title.lower():
-            if cat == 'ANIOS': found_cat = 'Arts'
-            else: found_cat = cat
-            break
-            
-    job["Category"] = found_cat
-    job["Subtitle"] = format_google_text(found_cat, 25)
 
     final_city = "Amsterdam"
     if raw_location:
@@ -367,14 +338,11 @@ def parse_job_page(url):
 # ------------------------------------------------------------------------------
 def main():
     start_time = time.time()
-    print(f"🚀 Start Scraper v17.0 (Jobs + DSA Feed Generator)")
-    
+    print(f"🚀 Start Scraper v20.0 (Official Brand Colors)")
     links = extract_links_from_sitemap()
     if not links: sys.exit(1)
-
     print(f"✅ {len(links)} links gevonden. Start parallelle verwerking...")
     valid_jobs = []
-
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_url = {executor.submit(parse_job_page, url): url for url in links}
         completed = 0
@@ -386,30 +354,25 @@ def main():
                 if data: valid_jobs.append(data)
             except Exception as exc: print(f"   Fout in thread: {exc}")
 
-    if valid_jobs:
-        valid_jobs = calculate_similar_jobs(valid_jobs)
+    if valid_jobs: valid_jobs = calculate_similar_jobs(valid_jobs)
 
-    # STAP 1: SCHRIJF JOBS FEED (VOOR DISPLAY/REMARKETING)
     print(f"💾 Opslaan {OUTPUT_FILE} (Vacature Feed)...")
     with open(OUTPUT_FILE, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
         writer.writeheader()
         writer.writerows(valid_jobs)
 
-    # STAP 2: SCHRIJF DSA FEED (VOOR SEARCH PAGINAFEEDS)
     print(f"💾 Opslaan {DSA_OUTPUT_FILE} (Page Feed)...")
     try:
         with open(DSA_OUTPUT_FILE, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=DSA_HEADERS)
             writer.writeheader()
             for job in valid_jobs:
-                # We mappen de data naar het simpele formaat: Page URL, Custom Label
                 writer.writerow({
                     "Page URL": job["Final URL"],
-                    "Custom Label": job["Category"] # Gebruik Categorie als label
+                    "Custom Label": job["Category"]
                 })
-    except Exception as e:
-        print(f"Fout bij schrijven DSA feed: {e}")
+    except Exception as e: print(f"Fout bij schrijven DSA feed: {e}")
     
     duration = time.time() - start_time
     print(f"🎉 Klaar in {duration:.2f} seconden! Twee feeds gegenereerd.")
